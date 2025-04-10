@@ -22,18 +22,37 @@ export async function getChatCompletion(payload) {
     } else if (page === CONSTANTS.pages.image) {
       if (!model) model = CONSTANTS.defaultModels.image
       if (!size) size = CONSTANTS.image.defaultSizes[model]
-
-      const response = await openai.images.generate({
-        model,
-        prompt: content,
-        response_format: 'b64_json',
-        size,
-      })
-
-      const b64_json_data = response?.data?.[0]?.b64_json
-      const url = 'data:image/png;base64,' + b64_json_data
-
-      return generateImage(url, CONSTANTS.pages.image)
+      
+      console.log('Image generation request:', { model, prompt: content, size })
+      
+      try {
+        const response = await openai.images.generate({
+          model,
+          prompt: content,
+          response_format: 'b64_json',
+          size,
+        })
+        
+        console.log('Image generation response received')
+        
+        if (!response?.data || !response.data[0] || !response.data[0].b64_json) {
+          console.error('Invalid response from OpenAI image API:', response)
+          throw new Error('Failed to generate image: Invalid response from API')
+        }
+        
+        const b64_json_data = response.data[0].b64_json
+        const url = 'data:image/png;base64,' + b64_json_data
+        
+        return await generateImage(url, CONSTANTS.pages.image)
+      } catch (error) {
+        console.error('Error generating image:', error)
+        // Check for specific OpenAI API errors
+        if (error.response) {
+          console.error('OpenAI API error:', error.response.status, error.response.data)
+          throw new Error(`Image generation failed: ${error.response.data?.error?.message || error.message}`)
+        }
+        throw error
+      }
     } else if (page === CONSTANTS.pages.audio) {
       if (!model) model = CONSTANTS.defaultModels.audio
 
@@ -115,32 +134,44 @@ async function generateImage(url, page) {
   let fileName
 
   try {
+    console.log('Processing generated image')
+    
     // Fetch the data URL and convert it to a Blob
     const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`Failed to process image: ${response.statusText}`)
+    }
+    
     const blob = await response.blob()
+    if (!blob || blob.size === 0) {
+      throw new Error('Received empty image data')
+    }
+    
+    console.log('Image blob created, size:', blob.size)
 
-    // Create a link element
+    // Create a link element for download
     const a = document.createElement('a')
-    // Create an object URL from the Blob
     const objectURL = URL.createObjectURL(blob)
-    // Set the download attribute with a filename
     a.href = objectURL
     a.download = 'image.png'
-    // Append the link to the body (required for Firefox)
     document.body.appendChild(a)
-    // Trigger a click on the link to start the download
     a.click()
-    // Remove the link from the document
     document.body.removeChild(a)
-    // Revoke the object URL to free up memory
     URL.revokeObjectURL(objectURL)
 
+    console.log('Uploading image to storage')
     fileName = await upload({ extension: 'png', file: blob, mimeType: 'image/png', page })
+    
+    if (!fileName) {
+      throw new Error('Failed to upload image to storage')
+    }
+    
+    console.log('Image uploaded successfully with name:', fileName)
+    return fileName
   } catch (error) {
-    console.error('Error downloading the image:', error)
+    console.error('Error processing the image:', error)
+    throw error
   }
-
-  return fileName
 }
 
 // Utility function to convert ArrayBuffer to Base64
